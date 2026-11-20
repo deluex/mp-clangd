@@ -1,14 +1,16 @@
 import { existsSync } from 'node:fs';
 import * as path from 'node:path';
 import * as vscode from 'vscode';
-import { StateStore, unitsForFile } from '@mp-clangd/core';
-import type { ProfileSet } from '@mp-clangd/core';
+import { StateStore, atomicWriteJson, unitsForFile } from '@mp-clangd/core';
+import type { Profile, ProfileSet } from '@mp-clangd/core';
 import {
   CLANGD_ARGUMENT,
   ensureClangdArguments,
   hasClangdArgument,
   restartClangd,
 } from './clangd.js';
+import { HeaderTree } from './header-tree.js';
+import { NavigationTracker } from './navigation.js';
 import { StatusBar } from './status-bar.js';
 import {
   MPCLANGD_DIRECTORY,
@@ -33,6 +35,7 @@ const COMPILE_COMMANDS_FILE = 'compile_commands.json';
 let statusBar: StatusBar | undefined;
 let outputChannel: vscode.OutputChannel | undefined;
 let profileSetCache: ProfileSet | undefined;
+let headerTree: HeaderTree | undefined;
 
 function requireWorkspaceDir(): string | undefined {
   const workspaceDir = getWorkspaceDir();
@@ -72,6 +75,7 @@ async function selectProfile(): Promise<void> {
       () => loadProfileSet(workspaceDir),
     );
     profileSetCache = profileSet;
+    atomicWriteJson(profilesFilePath(workspaceDir), profileSet);
 
     if (profileSet.profiles.length === 0) {
       void vscode.window.showWarningMessage('mp_clangd: no profiles found.');
@@ -95,6 +99,7 @@ async function selectProfile(): Promise<void> {
     state.save();
     materializeProfile(workspaceDir, state, picked.profile);
     statusBar?.update(picked.profile.id);
+    await headerTree?.setProfile(picked.profile);
 
     await ensureClangdArguments();
     await restartClangd();
@@ -110,7 +115,8 @@ async function selectUnit(): Promise<void> {
     return;
   }
 
-  const file = vscode.window.activeTextEditor?.document.uri.fsPath;
+  const editor = vscode.window.activeTextEditor;
+  const file = editor === undefined ? undefined : path.resolve(editor.document.uri.fsPath);
   if (file === undefined) {
     void vscode.window.showWarningMessage('mp_clangd: open a C/C++ file to select a compile unit.');
     return;
@@ -148,6 +154,16 @@ async function selectUnit(): Promise<void> {
     }
 
     state.setUnitKey(profile.id, file, picked.unit.key);
+    // A root file's unit change applies to every header that uses it as a root.
+    for (const entry of state.listHeaderRoots(profile.id)) {
+      if (entry.root.rootFile !== file) {
+        continue;
+      }
+      state.setHeaderRoot(profile.id, entry.header, {
+        rootFile: file,
+        unitKey: picked.unit.key,
+      });
+    }
     state.save();
     materializeProfile(workspaceDir, state, profile);
     statusBar?.update(profile.id, units.length > 1 ? picked.unit.label : undefined);
@@ -176,6 +192,7 @@ async function refresh(): Promise<void> {
     const state = StateStore.load(workspaceDir);
     const profile = resolveActiveProfile(result.profileSet, state);
     statusBar?.update(profile?.id);
+    await headerTree?.setProfile(profile);
     void vscode.window.showInformationMessage(
       `mp_clangd: refreshed ${countLabel(result.profileSet.profiles.length, 'profile')} and wrote ${result.cdbPath}`,
     );
@@ -231,14 +248,26 @@ export function activate(context: vscode.ExtensionContext): void {
   context.subscriptions.push(outputChannel);
 
   const workspaceDir = getWorkspaceDir();
+  let profile: Profile | undefined;
   if (workspaceDir === undefined) {
     statusBar.update(undefined);
   } else {
     const state = StateStore.load(workspaceDir);
     const profileSet = readProfilesFile(workspaceDir);
-    const profile = profileSet === undefined ? undefined : resolveActiveProfile(profileSet, state);
+    profile = profileSet === undefined ? undefined : resolveActiveProfile(profileSet, state);
     statusBar.update(profile?.id ?? state.activeProfile);
   }
+
+  const navigation = new NavigationTracker();
+  headerTree = new HeaderTree({
+    workspaceDir,
+    statusBar,
+    navigation,
+    profile,
+  });
+  context.subscriptions.push(headerTree, navigation);
+
+  void ensureClangdArguments();
 
   context.subscriptions.push(
     vscode.commands.registerCommand(COMMAND_SELECT_PROFILE, () => selectProfile()),
@@ -250,4 +279,5 @@ export function activate(context: vscode.ExtensionContext): void {
 
 export function deactivate(): void {
   profileSetCache = undefined;
+  headerTree = undefined;
 }

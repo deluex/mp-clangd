@@ -30,8 +30,24 @@
       {
         "command": "mpClangd.doctor",
         "title": "mp_clangd: Doctor"
+      },
+      {
+        "command": "mpClangd.showHeaderPaths",
+        "title": "mp_clangd: Show Header Paths"
+      },
+      {
+        "command": "mpClangd.selectHeaderRoot",
+        "title": "mp_clangd: Select Header Root"
       }
-    ]
+    ],
+    "views": {
+      "explorer": [
+        {
+          "id": "mpClangd.headerPaths",
+          "name": "mp_clangd Include Paths"
+        }
+      ]
+    }
   },
   "scripts": {
     "build": "node esbuild.mjs"

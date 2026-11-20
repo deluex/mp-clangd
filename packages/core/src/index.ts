@@ -7,3 +7,4 @@ export * from './fs-utils.js';
 export * from './state.js';
 export * from './materialize.js';
 export * from './include-graph.js';
+export * from './header-model.js';
