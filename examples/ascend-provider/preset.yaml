@@ -1,0 +1,17 @@
+name: ascend
+match:
+  compilers: ["*bisheng*", "*ccec*"]
+  args_any: ["-xasc", "-x asc", "-x cce"]
+probe:
+  parse: cc1
+  passes:
+    - name: AIC
+      arch_suffix: "-cube"
+      macros: [__NPU_DEVICE__, __DAV_CUBE__, __DAV_C220_CUBE__]
+    - name: AIV
+      arch_suffix: "-vec"
+      macros: [__NPU_DEVICE__, __DAV_VEC__, __DAV_C220_VEC__]
+sanitize:
+  remove_args: ["-xasc", "-x asc", "-xcce", "-x cce", "--npu-arch=*", "--cce-*"]
+  add_args: ["-x", "c++"]
+  keyword_defines: [__gm__, __global__, __vector__, __cube__, __aicore__]

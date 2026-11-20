@@ -1,0 +1,15 @@
+{
+  "name": "@mp-clangd/ascend-provider",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsup src/main.ts --format esm --out-dir dist --clean --no-external @mp-clangd/core --no-external @mp-clangd/provider-cdb"
+  },
+  "dependencies": {
+    "@mp-clangd/core": "0.0.0",
+    "@mp-clangd/provider-cdb": "0.0.0",
+    "shell-quote": "^1.8.2",
+    "yaml": "^2.6.1"
+  }
+}
