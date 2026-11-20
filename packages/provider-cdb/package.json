@@ -1,0 +1,15 @@
+{
+  "name": "@mp-clangd/provider-cdb",
+  "version": "0.0.0",
+  "type": "module",
+  "main": "src/index.ts",
+  "exports": { ".": "./src/index.ts" },
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "dependencies": {
+    "@mp-clangd/core": "0.0.0",
+    "fast-glob": "^3.3.2",
+    "shell-quote": "^1.8.2"
+  }
+}
