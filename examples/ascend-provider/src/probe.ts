@@ -15,6 +15,11 @@ export interface ProbePass {
   argv: string[];
   output?: string;
   arch?: string;
+  /**
+   * Set by `probeEntry` after running the pass with `-dM -E`: true when every
+   * macro declared by the preset for this pass is defined.
+   */
+  verified?: boolean;
 }
 
 function tokenAfter(argv: string[], flag: string): string | undefined {

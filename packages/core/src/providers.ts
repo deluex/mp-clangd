@@ -20,6 +20,9 @@ export class ProviderError extends Error {
 }
 
 const STDERR_LIMIT = 500;
+// ProfileSet JSON from large projects can exceed Node's 1 MiB default.
+const PROVIDER_MAX_BUFFER = 64 * 1024 * 1024;
+const PROVIDER_TIMEOUT_MS = 120_000;
 
 function withStderr(message: string, stderr: string): string {
   const snippet = stderr.slice(0, STDERR_LIMIT);
@@ -62,7 +65,13 @@ const commandProvider: ProviderFactory = (context) => {
   const env = configPath !== undefined
     ? { ...process.env, MP_CLANGD_PROVIDER_CONFIG: configPath }
     : process.env;
-  const result = spawnSync(executable, args, { cwd: workspaceDir, encoding: 'utf8', env });
+  const result = spawnSync(executable, args, {
+    cwd: workspaceDir,
+    encoding: 'utf8',
+    env,
+    maxBuffer: PROVIDER_MAX_BUFFER,
+    timeout: PROVIDER_TIMEOUT_MS,
+  });
   const stderr = result.stderr ?? '';
 
   if (result.error) {

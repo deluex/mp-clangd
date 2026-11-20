@@ -3,7 +3,9 @@
 本目录是 mp_clangd 的 Ascend C 示例 provider。它不属于核心，只演示插件层如何把 `bisheng`/`ccec` 的多 pass 编译展开成 mp_clangd 可直接消费的 ProfileSet：
 
 - 从 `compile_commands.json` 或构建日志中取得 kernel entry；
-- 对匹配 preset 的 entry 执行 compiler probe（`-v -c`），解析 cc1 命令行；
+- 对匹配 preset 的 entry 执行 compiler probe（`-v -c`），解析 cc1 命令行，并用 `-dM -E` 校验 preset 宏；
+- probe 结果按编译器/参数/源文件 mtime 缓存在 `.mpclangd/cache/probe/<hash>.json`，命中时不再启动编译器；
+- probe 或宏校验失败时按 entry 回退为 `unverified: true`，继续处理其他 entry；
 - 为每个 pass 生成一个 profile：`<base>/AIC`、`<base>/AIV`；
 - 移除目标编译器专有参数，补上 pass 宏与 Ascend 关键字擦除宏。
 
@@ -48,9 +50,17 @@ node examples/ascend-provider/dist/main.js \
 
 - 输入：一个或多个 CDB，和/或一份构建日志。
 - 输出：stdout 上的 ProfileSet JSON；错误写 stderr，退出码非 0。
-- 不写文件；需要保存时由调用方重定向或用 `command` provider 的 `output` 选项。
-- probe 临时文件写入 `<workspace>/.mpclangd/cache/probe/`；workspace 必须可写。
+- 不写 ProfileSet 文件；需要保存时由调用方重定向或用 `command` provider 的 `output` 选项。
+- probe 依赖 `<workspace>/.mpclangd/cache/probe/`；workspace 必须可写。
 - 运行前请确认 `bisheng` 或 `ccec` 在 `PATH` 中，或 CDB/日志里是绝对路径。
+
+### 2.3 probe 缓存、宏校验与回退
+
+- **缓存**：每个匹配 entry 的 probe 结果写入 `<workspace>/.mpclangd/cache/probe/<hash>.json`。缓存键是 sha1(编译器路径 + 编译器 mtime + `entry.directory` + `entry.arguments` + 源文件 mtime)；命中时跳过编译器调用。
+- **临时目录**：未命中时在 `.mpclangd/cache/probe/run-<uuid>/` 下生成 probe 输出；运行结束（成功或失败）后递归删除该目录及其中所有 cube/vec `.o`，不会累积对象文件。
+- **宏校验**：对每个 pass 的 cc1 命令追加 `-dM -E`，检查 preset 为该 pass 声明的每个宏是否已定义；校验结果随 pass 一起缓存。
+- **回退**：probe 抛错或宏校验失败时，该 entry 用原 driver 命令 + preset 的 pass 名称生成回退 entry，并置 `unverified: true`；stderr 输出一行警告，其他 entry 与 profile 继续生成。
+- **资源上限**：probe 与宏校验的 `spawnSync` 使用 64 MiB `maxBuffer` 和 120 秒超时，避免大输出或卡死。
 
 ## 3. 最小 fixture
 
@@ -77,7 +87,7 @@ node examples/ascend-provider/dist/main.js \
 - `default/AIC`：entry 包含 `-D__DAV_CUBE__=1`；
 - `default/AIV`：entry 包含 `-D__DAV_VEC__=1`。
 
-probe 会在 fixture 目录下生成 `.mpclangd/cache/probe/`，该目录被仓库 `.gitignore` 忽略。
+probe 会在 fixture 目录下生成 `.mpclangd/cache/probe/`，其中只有 `<hash>.json` 缓存；临时 `run-<uuid>/` 目录在每次 probe 后删除。`.mpclangd/` 被仓库 `.gitignore` 忽略。
 
 ## 4. 使用 `--build-log`
 
@@ -193,7 +203,30 @@ podman exec cann_tmp /tmp/node /tmp/ascend-provider/main.js \
 }
 ```
 
-结论：`default/AIC` 与 `default/AIV` 两个 profile 均生成；AIC 含 `-D__DAV_CUBE__=1`，AIV 含 `-D__DAV_VEC__=1`；`-xasc` 与 `--npu-arch=dav-2201` 已移除并替换为 `-x c++`。
+probe 缓存与临时文件核验（同一次运行后）：
+
+```bash
+podman exec cann_tmp find /tmp/minimal/.mpclangd -printf '%y %p %s\n'
+podman exec cann_tmp cat /tmp/minimal/.mpclangd/cache/probe/*.json
+```
+
+实际结果只有一份缓存文件；内容为 pass 名称与 `-dM` 校验结果，不含对象文件：
+
+```text
+d /tmp/minimal/.mpclangd/cache/probe
+f /tmp/minimal/.mpclangd/cache/probe/<sha1>.json
+
+{
+  "passes": [
+    { "name": "AIC", "verified": true },
+    { "name": "AIV", "verified": true }
+  ]
+}
+```
+
+再运行一次 provider，输出不变，缓存文件 mtime 不变（命中缓存，不再启动编译器）；`find /tmp/minimal -name '*.o'` 与 `run-*` 目录均为空。
+
+结论：`default/AIC` 与 `default/AIV` 两个 profile 均生成；AIC 含 `-D__DAV_CUBE__=1`，AIV 含 `-D__DAV_VEC__=1`；`-xasc` 与 `--npu-arch=dav-2201` 已移除并替换为 `-x c++`；缓存命中时不重复 probe，临时对象不残留。
 
 ### 5.3 清理
 
@@ -449,9 +482,9 @@ podman exec cann_tmp rm -rf /tmp/ops-transformer
 
 ## 8. 已知限制
 
-- probe 依赖真实编译器；首次运行每个匹配 entry 都会执行一次 `-v -c`。
-- probe 缓存目录当前不会自动清理。
-- preset 宏按声明注入，不做 `-dM` 校验。
+- probe 依赖真实编译器；每个匹配 entry 首次运行会执行一次 `-v -c` 与每个 pass 一次 `-dM -E`，之后命中缓存。
+- 缓存键包含编译器 mtime、参数与源文件 mtime，但不包含 preset 内容；修改 preset 后如需强制重新 probe，请删除 `.mpclangd/cache/probe/`。
+- `-dM` 校验只覆盖 preset 声明的宏，不比较完整宏集合；校验失败时该 entry 标记 `unverified: true`。
 - 构建日志的 `cd` 目录不支持空格；分离式选项可能误判源文件。
 - `dist/main.js` 不是完全自包含：运行时需要 `yaml` 与 `shell-quote`。
 - 示例 provider 只处理 `bisheng`/`ccec` 的多 pass 展开；核心与 provider 的通用契约见 [docs/usage.md](../../docs/usage.md)。

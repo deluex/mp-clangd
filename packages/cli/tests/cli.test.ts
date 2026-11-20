@@ -2,6 +2,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'nod
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
+import { StateStore, entryKey } from '@mp-clangd/core';
 import { runCli } from '../src/commands';
 
 let dir: string | undefined;
@@ -59,6 +60,48 @@ describe('cli', () => {
     const { io: stream, out } = io();
     expect(await runCli(['doctor'], stream)).toBe(0);
     expect(out.join('\n')).toContain('missing');
+  });
+
+  it('propagates a unit switch to header roots on refresh', async () => {
+    dir = mkdtempSync(join(tmpdir(), 'mp-clangd-cli-'));
+    mkdirSync(join(dir, 'build'), { recursive: true });
+    const source = join(dir, 'a.cpp');
+    const header = join(dir, 'a.h');
+    const unitA = {
+      directory: join(dir, 'build'),
+      file: source,
+      arguments: ['clang++', '-DA=1', '-c', source, '-o', 'a.o'],
+    };
+    const unitB = {
+      directory: join(dir, 'build'),
+      file: source,
+      arguments: ['clang++', '-DB=1', '-c', source, '-o', 'b.o'],
+    };
+    writeFileSync(join(dir, 'build/compile_commands.json'), JSON.stringify([unitA, unitB]));
+
+    const store = StateStore.load(dir);
+    store.setActiveProfile('build');
+    store.setUnitKey('build', source, entryKey(unitA));
+    store.setHeaderRoot('build', header, { rootFile: source, unitKey: entryKey(unitA) });
+    store.save();
+
+    const { io: stream } = io();
+    expect(await runCli(['unit', 'a.cpp', 'B=1'], stream)).toBe(0);
+    expect(await runCli(['refresh'], stream)).toBe(0);
+
+    const reloaded = StateStore.load(dir);
+    expect(reloaded.getHeaderRoot('build', header)).toEqual({
+      rootFile: source,
+      unitKey: entryKey(unitB),
+    });
+    const cdb = JSON.parse(
+      readFileSync(join(dir, '.mpclangd/compile_commands.json'), 'utf8'),
+    ) as Array<{ file: string; arguments: string[] }>;
+    const headerEntry = cdb.find((entry) => entry.file === header);
+    expect(headerEntry?.arguments).toContain('-DB=1');
+    expect(headerEntry?.arguments).not.toContain('-DA=1');
+    const sourceEntry = cdb.find((entry) => entry.file === source);
+    expect(sourceEntry?.arguments).toContain('-DB=1');
   });
 
   it('doctor reports provider status and continues after a failure', async () => {

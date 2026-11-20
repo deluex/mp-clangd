@@ -6,6 +6,9 @@
   "scripts": {
     "build": "tsup src/main.ts --format esm --out-dir dist --clean"
   },
+  "engines": {
+    "node": ">=20.0.0"
+  },
   "dependencies": {
     "@mp-clangd/core": "0.0.0",
     "@mp-clangd/provider-cdb": "0.0.0",

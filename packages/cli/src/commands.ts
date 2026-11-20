@@ -9,6 +9,7 @@ import {
   registerProvider,
   runProviders,
   unitsForFile,
+  updateHeaderRootsForFile,
   writeCompileCommands,
 } from '@mp-clangd/core';
 import type {
@@ -185,6 +186,7 @@ async function runUnit(io: CliIO, args: string[]): Promise<number> {
     throw new CliError(`unit "${name}" not found for "${file}"`);
   }
   state.setUnitKey(profile.id, file, selected.key);
+  updateHeaderRootsForFile(state, profile.id, file, selected.key);
   state.save();
   io.stdout(`unit for ${file}: ${selected.label}`);
   return 0;

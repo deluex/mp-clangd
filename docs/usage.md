@@ -102,7 +102,7 @@ node_modules/**
 执行语义：
 
 - 使用 `spawnSync(executable, args)` 直接执行，不经过 shell；因此管道、重定向和 shell 变量不会生效。
-- 工作目录是 workspace。
+- 工作目录是 workspace；stdout 上限 64 MiB，执行超时 120 秒。
 - `command` 的每个 token 支持 `{workspace}` 替换为 workspace 绝对路径。
 - 设置 `config` 后：
   - `config` 路径解析为绝对路径；
@@ -170,12 +170,14 @@ ProfileSet 是 provider 与核心之间的唯一契约。
 | `entries[].directory` | 必须是绝对路径。 |
 | `entries[].file` | 非空字符串；相对路径按 `directory` 解析。 |
 | `entries[].arguments` | 非空字符串数组；第一项是编译器/驱动。 |
+| `entries[].unverified` | 可选布尔。provider 无法完成精确 probe 或宏校验时置为 `true`；核心原样保留。 |
 
 补充语义：
 
 - 同一 profile 内同一 `file` 的多条不同 entry 表示多个 unit。
 - `entryKey` 由 `directory` 与 `arguments` 计算；完全相同的命令会去重。
 - provider 负责把命令转换成 clangd 可用的 driver 风格：保留 include、宏和标准参数，移除目标编译器专有参数，补上关键字擦除宏。
+- `unverified: true` 表示该 entry 来自回退路径（probe 或宏校验失败），参数仍可用于 clangd，但未经过编译器确认；核心只透传，不改变该标记。
 - 核心不检查 `file` 是否存在，也不执行编译器。
 - 核心不会自动补 `-x c++`、`-D` 宏或 include 路径；这些都属于 provider 的职责。
 
@@ -183,7 +185,7 @@ ProfileSet 是 provider 与核心之间的唯一契约。
 
 ### 4.1 直接提供文件
 
-VSCode 扩展在激活时优先读取 `.mpclangd/profiles.json`；如果文件存在且合法，就直接使用。激活阶段不运行 provider；文件不存在时也不会在激活阶段运行 provider。`Refresh`、`Select Profile`、`Select Compile Unit` 会运行 provider。适合由外部构建系统生成 ProfileSet 的场景。
+VSCode 扩展在激活时优先读取 `.mpclangd/profiles.json`；如果文件存在且合法，就直接使用。激活阶段不运行 provider；文件不存在时也不会在激活阶段运行 provider。`Select Compile Unit` 在内存缓存或合法的 `profiles.json` 可用时直接复用，只有两者都不可用时才运行 provider；`Refresh` 与 `Select Profile` 始终运行 provider。适合由外部构建系统生成 ProfileSet 的场景。
 
 ```text
 <workspace>/.mpclangd/profiles.json
@@ -313,21 +315,30 @@ sanitize:
 
 1. 用 preset 的 `match` 分流 entry。
 2. 对每个匹配 entry 运行 compiler probe：
-   - 复制原命令，移除已有 `-o` 及其值；
-   - 追加 `-v -c -o <workspace>/.mpclangd/cache/probe/probe-<uuid>.o`；
-   - 在 entry 的 `directory` 下执行编译器；
-   - 从 stderr 解析包含 ` -cc1 ` 的行。
-3. 按每个 pass 的 `arch_suffix` 找到对应 cc1 命令；找不到时报错。
-4. 用原 driver 命令 + `sanitize` + 该 pass 的宏生成 clangd entry。
-5. 为每个 pass 生成 `<base>/<pass.name>` profile；非匹配 entry 原样复制到每个派生 profile。
-6. 没有任何匹配 entry 的 base profile 原样保留。
+   - 计算缓存键：sha1(编译器路径 + 编译器 mtime + `entry.directory` + `entry.arguments` + 源文件 mtime)；
+   - 命中 `<workspace>/.mpclangd/cache/probe/<hash>.json` 时直接复用缓存，不启动编译器；
+   - 未命中时复制原命令，移除已有 `-o` 及其值，追加 `-v -c -o <workspace>/.mpclangd/cache/probe/run-<uuid>/probe.o`；
+   - 在 entry 的 `directory` 下执行编译器（stdout/stderr 缓冲上限 64 MiB，超时 120 秒）；
+   - 从 stderr 解析包含 ` -cc1 ` 的行；
+   - 无论成功与否，`finally` 中递归删除本次 `run-<uuid>/` 临时目录及其中所有设备 `.o`。
+3. 按每个 pass 的 `arch_suffix` 找到对应 cc1 命令；找不到时按回退处理。
+4. 对每个 pass 的 cc1 命令去掉 `-o` 后追加 `-dM -E`，检查 preset 为该 pass 声明的每个宏是否已定义；校验结果随 pass 写入缓存。
+5. 用原 driver 命令 + `sanitize` + 该 pass 的宏生成 clangd entry。
+6. 为每个 pass 生成 `<base>/<pass.name>` profile；非匹配 entry 原样复制到每个派生 profile。
+7. 没有任何匹配 entry 的 base profile 原样保留。
+
+回退规则：
+
+- probe 抛错（编译器无法执行、找不到 pass 等）或 `-dM` 宏校验失败时，不中止整个 provider 运行。
+- 该 entry 改用原 driver 命令 + preset 的 pass 名称走 `sanitize` + 宏注入，生成回退 entry，并置 `unverified: true`。
+- 向 stderr 输出一行警告；其他 entry 与其他 profile 继续正常生成。
 
 注意：
 
 - probe 只要求 cc1 行中出现 preset 声明的 pass；编译器后续报错不会阻止 pass 解析。完整编译是否成功由构建系统决定。
-- probe 产生的临时 `.o` 文件会留在 `.mpclangd/cache/probe/`，当前不会自动清理；编译器 stderr 只在内存中解析，不会写入日志文件。
-- 如果 probe 找不到某个 pass，命令会失败并报告该 pass 与 `arch_suffix`。
-- preset 宏只是按声明注入 `-D<macro>=1`；当前实现不会运行 `-dM` 逐项校验宏集合。
+- 缓存只保存 pass 名称、argv 与宏校验结果，不保存对象文件；临时目录每次 probe 后删除，不会累积 `.o`。
+- 编译器 stderr 只在内存中解析，不会写入日志文件。
+- 宏校验只覆盖 preset 声明的宏，不比较完整宏集合。
 
 ### 5.3 构建日志采集
 
@@ -369,7 +380,7 @@ sanitize:
 - 结果为 `.mpclangd/compile_commands.json`，使用临时文件 + rename 原子写入。
 - 切换 profile 时重建整份物化 CDB；切换 unit 时只改变受影响文件（实现上仍会重写整份文件，但其他文件的选择保持不变）。
 - CLI 的 `unit` 命令不直接调用物化；执行 `mp-clangd refresh` 后会按保存的 unit 重新物化。VSCode 扩展的 unit 切换会立即物化。
-- 头文件 entry 来自 `headerRoots`：复制根 TU 的命令，把 `arguments` 中的源文件 token 替换为头文件路径；找不到对应 unit 时跳过。
+- 头文件 entry 来自 `headerRoots`：复制根 TU 的命令，把 `arguments` 中的源文件 token 替换为头文件路径，并保留根 entry 的 `unverified` 标记；找不到对应 unit 时跳过。
 - 扩展在切换 profile/unit/头文件根后调用 `clangd.restart`；CLI 的 `profile`/`refresh` 只写文件，clangd 会按 CDB 变化热重载。
 
 ### 6.3 clangd 参数

@@ -8,6 +8,7 @@ import {
   unitsForFile,
 } from '@mp-clangd/core';
 import type {
+  CompileEntry,
   HeaderRoot,
   HeaderTreeItem,
   IncludeGraph,
@@ -125,17 +126,25 @@ class HeaderTreeProvider
   }
 }
 
+export type BuildGraph = (
+  entries: CompileEntry[],
+  opts: { workspaceDir: string },
+) => Promise<IncludeGraph>;
+
 export interface HeaderTreeDependencies {
   workspaceDir: string | undefined;
   statusBar: StatusBar;
   navigation: NavigationTracker;
   profile?: Profile;
+  /** Test seam; defaults to the core include-graph builder. */
+  buildGraph?: BuildGraph;
 }
 
 export class HeaderTree implements vscode.Disposable {
   private readonly provider = new HeaderTreeProvider();
   private readonly treeView: vscode.TreeView<HeaderTreeNode>;
   private readonly disposables: vscode.Disposable[] = [];
+  private readonly buildGraph: BuildGraph;
   private profile: Profile | undefined;
   private graph: IncludeGraph | undefined;
   private graphLoading: Promise<IncludeGraph | undefined> | undefined;
@@ -144,6 +153,7 @@ export class HeaderTree implements vscode.Disposable {
 
   constructor(private readonly deps: HeaderTreeDependencies) {
     this.profile = deps.profile;
+    this.buildGraph = deps.buildGraph ?? buildIncludeGraph;
     this.treeView = vscode.window.createTreeView(HEADER_PATHS_VIEW_ID, {
       treeDataProvider: this.provider,
     });
@@ -158,8 +168,15 @@ export class HeaderTree implements vscode.Disposable {
         this.selectHeaderRoot(node),
       ),
     );
-    void this.ensureGraph();
-    void this.handleActiveEditor(vscode.window.activeTextEditor);
+    // The include graph is built lazily on the first header activation or
+    // `Show Header Paths`; construction must not walk the workspace.
+    const editor = vscode.window.activeTextEditor;
+    if (editor !== undefined) {
+      const file = path.resolve(editor.document.uri.fsPath);
+      if (isSourceFile(file)) {
+        this.updateStatusBar(file);
+      }
+    }
   }
 
   async setProfile(profile: Profile | undefined): Promise<void> {
@@ -168,7 +185,6 @@ export class HeaderTree implements vscode.Disposable {
     this.graph = undefined;
     this.graphLoading = undefined;
     this.provider.setModel([], undefined);
-    void this.ensureGraph();
     await this.handleActiveEditor(vscode.window.activeTextEditor);
   }
 
@@ -434,7 +450,7 @@ export class HeaderTree implements vscode.Disposable {
     }
     if (this.graphLoading === undefined) {
       const generation = this.graphGeneration;
-      this.graphLoading = buildIncludeGraph(profile.entries, { workspaceDir })
+      this.graphLoading = this.buildGraph(profile.entries, { workspaceDir })
         .then((graph) => {
           if (generation === this.graphGeneration) {
             this.graph = graph;
@@ -442,8 +458,8 @@ export class HeaderTree implements vscode.Disposable {
           return graph;
         })
         .catch((error: unknown) => {
+          // Failures are not cached: the next header activation retries.
           if (generation === this.graphGeneration) {
-            this.graph = { rootsFor: () => [] };
             showError(error);
           }
           return undefined;

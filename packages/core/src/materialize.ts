@@ -63,11 +63,15 @@ function headerEntry(profile: Profile, request: HeaderRootRequest): CompileEntry
     return undefined;
   }
   const source = root.entry;
-  return {
+  const entry: CompileEntry = {
     directory: source.directory,
     file: request.header,
     arguments: replaceSourceToken(source, request.header),
   };
+  if (source.unverified !== undefined) {
+    entry.unverified = source.unverified;
+  }
+  return entry;
 }
 
 export function materialize(input: MaterializeInput): CompileEntry[] {

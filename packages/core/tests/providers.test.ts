@@ -116,6 +116,19 @@ describe('runProviders', () => {
     expect(set.profiles.map((p) => p.id)).toEqual(['out']);
   });
 
+  it('accepts provider stdout larger than the default 1 MiB buffer', async () => {
+    dir = mkdtempSync(join(tmpdir(), 'mp-clangd-cfg-'));
+    const script = join(dir, 'big.mjs');
+    writeFileSync(script, [
+      "const payload = { profiles: [{ id: 'big', entries: [] }], pad: 'x'.repeat(2 * 1024 * 1024) };",
+      'process.stdout.write(JSON.stringify(payload));',
+    ].join('\n'));
+    const set = await runProviders(dir, {
+      providers: [{ use: 'command', command: [process.execPath, script] }],
+    });
+    expect(set.profiles.map((p) => p.id)).toEqual(['big']);
+  });
+
   it('passes builtin include/exclude to the provider factory', async () => {
     dir = mkdtempSync(join(tmpdir(), 'mp-clangd-cfg-'));
     registerProvider('builtin:cdb', async ({ config }) => {

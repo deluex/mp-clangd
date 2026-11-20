@@ -1,7 +1,12 @@
 import { existsSync } from 'node:fs';
 import * as path from 'node:path';
 import * as vscode from 'vscode';
-import { StateStore, atomicWriteJson, unitsForFile } from '@mp-clangd/core';
+import {
+  StateStore,
+  atomicWriteJson,
+  unitsForFile,
+  updateHeaderRootsForFile,
+} from '@mp-clangd/core';
 import type { Profile, ProfileSet } from '@mp-clangd/core';
 import {
   CLANGD_ARGUMENT,
@@ -156,15 +161,7 @@ async function selectUnit(): Promise<void> {
 
     state.setUnitKey(profile.id, file, picked.unit.key);
     // A root file's unit change applies to every header that uses it as a root.
-    for (const entry of state.listHeaderRoots(profile.id)) {
-      if (entry.root.rootFile !== file) {
-        continue;
-      }
-      state.setHeaderRoot(profile.id, entry.header, {
-        rootFile: file,
-        unitKey: picked.unit.key,
-      });
-    }
+    updateHeaderRootsForFile(state, profile.id, file, picked.unit.key);
     state.save();
     materializeProfile(workspaceDir, state, profile);
     statusBar?.update(profile.id, units.length > 1 ? picked.unit.label : undefined);
@@ -287,4 +284,8 @@ export function activate(context: vscode.ExtensionContext): void {
 export function deactivate(): void {
   profileSetCache = undefined;
   headerTree = undefined;
+  statusBar?.dispose();
+  statusBar = undefined;
+  outputChannel?.dispose();
+  outputChannel = undefined;
 }

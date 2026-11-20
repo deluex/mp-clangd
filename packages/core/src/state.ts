@@ -120,6 +120,28 @@ function parseState(raw: string): StateFile {
   };
 }
 
+/**
+ * Points every header root that uses `file` as its root at `unitKey`.
+ * Call this after changing the selected unit of `file` so header entries
+ * materialize with the same unit as their root TU.
+ */
+export function updateHeaderRootsForFile(
+  state: StateStore,
+  profileId: string,
+  file: string,
+  unitKey: string,
+): number {
+  let updated = 0;
+  for (const entry of state.listHeaderRoots(profileId)) {
+    if (entry.root.rootFile !== file) {
+      continue;
+    }
+    state.setHeaderRoot(profileId, entry.header, { rootFile: file, unitKey });
+    updated += 1;
+  }
+  return updated;
+}
+
 export class StateStore {
   readonly path: string;
   private state: StateFile;

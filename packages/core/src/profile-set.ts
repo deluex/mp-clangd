@@ -30,19 +30,26 @@ function parseEntry(value: unknown, context: string): CompileEntry {
   if (!isRecord(value)) {
     throw new ProfileSetError(`${context} must be an object`);
   }
-  const { directory, file, arguments: rawArguments } = value;
+  const { directory, file, arguments: rawArguments, unverified } = value;
   if (typeof directory !== 'string' || !path.isAbsolute(directory)) {
     throw new ProfileSetError(`${context}.directory must be an absolute path`);
   }
   if (typeof file !== 'string' || file.length === 0) {
     throw new ProfileSetError(`${context}.file must be a non-empty string`);
   }
+  if (unverified !== undefined && typeof unverified !== 'boolean') {
+    throw new ProfileSetError(`${context}.unverified must be a boolean`);
+  }
   const args = parseArguments(rawArguments, context);
-  return {
+  const entry: CompileEntry = {
     directory,
     file: path.resolve(directory, file),
     arguments: args,
   };
+  if (unverified !== undefined) {
+    entry.unverified = unverified;
+  }
+  return entry;
 }
 
 function parseProfile(value: unknown, context: string, seenIds: Set<string>): Profile {
@@ -81,11 +88,17 @@ export function parseProfileSet(value: unknown): ProfileSet {
 function cloneProfile(profile: Profile): Profile {
   return {
     id: profile.id,
-    entries: profile.entries.map((entry) => ({
-      directory: entry.directory,
-      file: entry.file,
-      arguments: [...entry.arguments],
-    })),
+    entries: profile.entries.map((entry) => {
+      const clone: CompileEntry = {
+        directory: entry.directory,
+        file: entry.file,
+        arguments: [...entry.arguments],
+      };
+      if (entry.unverified !== undefined) {
+        clone.unverified = entry.unverified;
+      }
+      return clone;
+    }),
   };
 }
 

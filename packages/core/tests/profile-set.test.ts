@@ -43,6 +43,34 @@ describe('parseProfileSet', () => {
     };
     expect(() => parseProfileSet(input)).toThrow(ProfileSetError);
   });
+
+  it('preserves the optional unverified flag', () => {
+    const set = parseProfileSet({
+      profiles: [{
+        id: 'x',
+        entries: [
+          { directory: '/w', file: 'a.cpp', arguments: ['clang++'], unverified: true },
+          { directory: '/w', file: 'b.cpp', arguments: ['clang++'], unverified: false },
+        ],
+      }],
+    });
+    expect(set.profiles[0].entries[0].unverified).toBe(true);
+    expect(set.profiles[0].entries[1].unverified).toBe(false);
+
+    const merged = mergeProfileSets([set]);
+    expect(merged.profiles[0].entries[0].unverified).toBe(true);
+    expect(merged.profiles[0].entries[1].unverified).toBe(false);
+  });
+
+  it('rejects a non-boolean unverified flag', () => {
+    const input = {
+      profiles: [{
+        id: 'x',
+        entries: [{ directory: '/w', file: 'a.cpp', arguments: ['clang++'], unverified: 'yes' }],
+      }],
+    };
+    expect(() => parseProfileSet(input)).toThrow(/unverified must be a boolean/);
+  });
 });
 
 describe('mergeProfileSets', () => {

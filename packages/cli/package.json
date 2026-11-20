@@ -8,8 +8,14 @@
   "scripts": {
     "build": "tsup src/main.ts --format esm --out-dir dist --clean"
   },
+  "engines": {
+    "node": ">=20.0.0"
+  },
   "dependencies": {
     "@mp-clangd/core": "0.0.0",
-    "@mp-clangd/provider-cdb": "0.0.0"
+    "@mp-clangd/provider-cdb": "0.0.0",
+    "fast-glob": "^3.3.2",
+    "shell-quote": "^1.8.2",
+    "yaml": "^2.6.1"
   }
 }

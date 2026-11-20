@@ -186,7 +186,7 @@ unit 的 label 规则：
   2. 该头文件的历史选择；
   3. 按路径字母序第一条。
 - 切换 profile/unit/头文件根后重新物化 CDB，并调用 `clangd.restart` 重新加载。
-- 扩展优先读取 `.mpclangd/profiles.json`；文件存在且合法时直接使用，激活阶段不运行 provider，文件不存在时激活阶段也不运行 provider。`Refresh`、`Select Profile`、`Select Compile Unit` 会运行 provider；`Refresh` 与 `Select Profile` 会重新生成 `.mpclangd/profiles.json`。
+- 扩展优先读取 `.mpclangd/profiles.json`；文件存在且合法时直接使用，激活阶段不运行 provider，文件不存在时激活阶段也不运行 provider。`Select Compile Unit` 在内存缓存或合法的 `profiles.json` 可用时不会运行 provider，只有两者都不可用时才回退到运行 provider；`Refresh` 与 `Select Profile` 始终运行 provider，并重新生成 `.mpclangd/profiles.json`。
 
 ## ProfileSet 与 provider 契约
 
@@ -216,6 +216,7 @@ provider 输出统一的 JSON（标准输出，或 `output` 指定的文件）�
 - `entry.directory` 必须是绝对路径。
 - `entry.file` 非空；相对路径按 `directory` 解析为绝对路径。
 - `entry.arguments` 是非空字符串数组，第一项为编译器/驱动。
+- `entry.unverified`（可选，布尔）是诊断标记：provider 无法完成精确 probe 或宏校验、只能回退到启发式参数时为 `true`；核心在校验、合并与物化（含头文件 entry）时原样保留。
 - 核心不检查文件是否真实存在；provider 负责生成 clangd 可用的 driver 风格命令（宏、include、关键字擦除）。
 - 同一 profile 内同一 `file` 的多条不同 entry 即多个 unit；完全相同的命令会去重。
 
@@ -249,7 +250,7 @@ providers:
 ├── profiles.json           # provider 输出或合并结果
 ├── compile_commands.json   # 当前 profile 的物化 CDB
 ├── state.json              # 当前 profile、每文件 unit、头文件选择与历史
-└── cache/                  # provider 缓存（例如 probe 临时目录）
+└── cache/                  # provider 缓存（例如 probe/<hash>.json）
 ```
 
 `.mpclangd/` 由 `mp-clangd init` 写入 `.gitignore`。
@@ -261,9 +262,10 @@ providers:
 - **Ascend 适配是示例 provider**，位于 `examples/ascend-provider/`，不进入核心代码。
 - **单 workspace**。不支持多根 workspace、远程开发或其他编辑器 UI。
 - **静态 include 图**。include 链由源码静态扫描近似得到，不使用编译器依赖输出；条件编译可能造成过度近似。
-- **头文件 entry 按需物化**。只对已打开或显式选择过根 TU 的头文件写入 entry。
-- **provider 同步执行**。大工程首次 probe/refresh 可能较慢；Ascend provider 会把 probe 临时文件放在 `.mpclangd/cache/probe/`。
+- **头文件 entry 按需物化**。只对已打开或显式选择过根 TU 的头文件写入 entry；include 图在首次 `Show Header Paths` 或头文件激活时惰性构建，构建失败不会永久缓存、下次会重试。
+- **provider 与 probe 同步执行**。M1 在扩展宿主中通过 `spawnSync` 同步运行 provider/probe（`maxBuffer` 64 MiB、超时 120 s）；大工程首次 `Refresh` 可能让扩展宿主短暂卡顿，异步执行留待后续阶段。Ascend provider 的 probe 结果缓存在 `.mpclangd/cache/probe/<hash>.json`，临时目录在每次 probe 后递归删除。
 - **`doctor` 报告生成文件、clangd 参数与 provider 状态**。它逐个运行配置中的 provider 并报告成功或失败；单个 provider 失败不会中止其他检查。它不探测编译器版本或 probe 是否可用。
+- **部分验收项尚未在当前环境验证**（stock clangd 解析物化 CDB、状态栏切换、头文件树 UI）。具体原因与操作员手工步骤见 [UNVERIFIED 清单](examples/ascend-provider/README.md#7-未验证项unverified)。
 
 ## 开发与测试
 

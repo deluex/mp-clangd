@@ -148,7 +148,8 @@ provider 输出统一的 JSON（默认 `.mpclangd/profiles.json`；启用多个 
         {
           "directory": "/abs/build",
           "file": "/abs/src/kernel.cpp",
-          "arguments": ["bisheng", "-x", "c++", "-std=c++17", "..."]
+          "arguments": ["bisheng", "-x", "c++", "-std=c++17", "..."],
+          "unverified": true
         }
       ]
     }
@@ -159,6 +160,7 @@ provider 输出统一的 JSON（默认 `.mpclangd/profiles.json`；启用多个 
 - 同一 profile 内同一 `file` 的多条 entry 即编译单元；不需要额外的标签字段。
 - 核心只接受绝对路径；相对路径按 `directory` 解析。
 - provider 负责把命令转换成 clangd 可用的 driver 风格（含宏、include、关键字擦除）。
+- `unverified`（可选，布尔）是诊断标记：provider 无法完成精确 probe 或宏校验、只能回退到启发式参数时置为 `true`。核心在校验、合并与物化（含头文件 entry）时原样保留该字段，供 UI 与用户判断配置是否可信。
 - 核心校验路径与 profile id；不合法时进入只读错误状态并提示。
 - 多个 provider 的输出由核心合并；profile id 冲突时报错。
 - 初始 profile：优先使用上次选择（state），否则列表第一个。
@@ -258,13 +260,13 @@ Ascend provider 负责两类 CDB 中拿不到的输入：
 
 1. **entry 合成**：opc/TBE 内核不进 CMake CDB。provider 从 op 配置或带 `-v` 的构建日志重建 bisheng driver 命令（`-x cce` / `-xasc`、include、宏、arch），作为 base entry。
 2. **compiler probe 展开**：对匹配 preset 的 entry 执行：
-   - 在 entry 的 `directory` 下运行原命令加 `-v -c`，输出到 `.mpclangd/cache/probe/<hash>/`；
+   - 在 entry 的 `directory` 下运行原命令加 `-v -c`，输出到 `.mpclangd/cache/probe/run-<uuid>/` 下的临时目录；该目录（含 cube/vec 等设备 `.o`）在 `finally` 中递归删除，不保留对象文件；
    - 解析 stderr 中 ` -cc1 ` 行，按 `-o ...-cube.o` / `-vec.o` 识别 pass；
-   - 对每个 pass 的 cc1 命令追加 `-dM -E`，校验 preset 声明的宏；
+   - 对每个 pass 的 cc1 命令去掉 `-o` 后追加 `-dM -E`，检查 preset 为该 pass 声明的每个宏都已定义，并把校验结果随 pass 一起缓存；
    - 用原 driver 命令 + `sanitize` + preset 宏 + 关键字擦除宏，生成两条 clangd 可用的 entry；
    - 为每个 pass 直接生成一个 profile（`<base>/AIC`、`<base>/AIV`）。
-3. 缓存键：编译器路径与 mtime、原始命令 hash、源文件 mtime。
-4. probe 失败时回退到启发式展开，并在 ProfileSet 中标记 `unverified`。
+3. 缓存：结果写入 `<workspace>/.mpclangd/cache/probe/<hash>.json`，值为 pass 名称与宏校验结果，不含对象文件。缓存键为 sha1(编译器路径 + 编译器 mtime + entry.directory + entry.arguments + 源文件 mtime)；命中时不再启动编译器。
+4. probe 或宏校验失败时按 entry 回退：用原 driver 命令 + preset 的 pass 名称走 `buildClangdArgs` 生成回退 entry，置 `unverified: true`，向 stderr 输出一行警告并继续处理其他 entry 与 profile，不中止整个 provider 运行。
 
 代价控制：
 

@@ -2,7 +2,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { StateStore } from '../src/index';
+import { StateStore, updateHeaderRootsForFile } from '../src/index';
 
 let dir: string | undefined;
 afterEach(() => {
@@ -51,6 +51,34 @@ describe('StateStore', () => {
       { header: '/w/c.h', root: { rootFile: '/w/c.cpp', unitKey: 'u3' } },
     ]);
     expect(store.listHeaderRoots('missing')).toEqual([]);
+  });
+
+  it('repoints only the header roots that use the changed file', () => {
+    dir = mkdtempSync(join(tmpdir(), 'mp-clangd-state-'));
+    const store = StateStore.load(dir);
+    store.setHeaderRoot('p1', '/w/a.h', { rootFile: '/w/a.cpp', unitKey: 'u1' });
+    store.setHeaderRoot('p1', '/w/b.h', { rootFile: '/w/a.cpp', unitKey: 'u1' });
+    store.setHeaderRoot('p1', '/w/c.h', { rootFile: '/w/c.cpp', unitKey: 'u1' });
+    store.setHeaderRoot('p2', '/w/d.h', { rootFile: '/w/a.cpp', unitKey: 'u1' });
+
+    expect(updateHeaderRootsForFile(store, 'p1', '/w/a.cpp', 'u2')).toBe(2);
+    expect(store.getHeaderRoot('p1', '/w/a.h')).toEqual({
+      rootFile: '/w/a.cpp',
+      unitKey: 'u2',
+    });
+    expect(store.getHeaderRoot('p1', '/w/b.h')).toEqual({
+      rootFile: '/w/a.cpp',
+      unitKey: 'u2',
+    });
+    expect(store.getHeaderRoot('p1', '/w/c.h')).toEqual({
+      rootFile: '/w/c.cpp',
+      unitKey: 'u1',
+    });
+    expect(store.getHeaderRoot('p2', '/w/d.h')).toEqual({
+      rootFile: '/w/a.cpp',
+      unitKey: 'u1',
+    });
+    expect(updateHeaderRootsForFile(store, 'p1', '/w/missing.cpp', 'u3')).toBe(0);
   });
 
   it('treats missing or corrupt state as empty', () => {

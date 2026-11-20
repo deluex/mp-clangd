@@ -59,6 +59,25 @@ describe('materialize', () => {
     expect(header?.arguments).not.toContain('/w/k.cpp');
   });
 
+  it('preserves unverified on the selected unit and its header entry', () => {
+    dir = mkdtempSync(join(tmpdir(), 'mp-clangd-mat-'));
+    const fallback = {
+      directory: '/w',
+      file: '/w/k.cpp',
+      arguments: ['bisheng', '-D__DAV_CUBE__=1', '-c', '/w/k.cpp'],
+      unverified: true,
+    };
+    const state = StateStore.load(dir);
+    state.setUnitKey('p', '/w/k.cpp', entryKey(fallback));
+    const out = materialize({
+      profile: { id: 'p', entries: [fallback] },
+      state,
+      headerRoots: [{ header: '/w/h.h', rootFile: '/w/k.cpp', unitKey: entryKey(fallback) }],
+    });
+    expect(out.find((e) => e.file === '/w/k.cpp')?.unverified).toBe(true);
+    expect(out.find((e) => e.file === '/w/h.h')?.unverified).toBe(true);
+  });
+
   it('replaces a relative source token for a header entry', () => {
     dir = mkdtempSync(join(tmpdir(), 'mp-clangd-mat-'));
     const state = StateStore.load(dir);
