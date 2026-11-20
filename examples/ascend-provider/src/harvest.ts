@@ -19,7 +19,9 @@ function tokenAfter(tokens: string[], flag: string): string | undefined {
 /**
  * Splits a command into plain tokens and stops at the first shell operator,
  * so pipelines and redirections (e.g. `2>&1 | tee build.log`) never leak
- * into the harvested arguments.
+ * into the harvested arguments. The descriptor prefix of a redirection
+ * (`2` in `2>&1`) is dropped, while glob tokens are skipped and parsing
+ * continues so later arguments survive.
  */
 function tokenize(command: string): string[] {
   const tokens: string[] = [];
@@ -28,9 +30,19 @@ function tokenize(command: string): string[] {
       tokens.push(entry);
       continue;
     }
-    if ('op' in entry) {
-      break;
+    if (!('op' in entry)) {
+      continue;
     }
+    if (entry.op === 'glob') {
+      continue;
+    }
+    if (entry.op.startsWith('>') || entry.op.startsWith('<')) {
+      const previous = tokens[tokens.length - 1];
+      if (previous !== undefined && /^\d+$/.test(previous)) {
+        tokens.pop();
+      }
+    }
+    break;
   }
   return tokens;
 }

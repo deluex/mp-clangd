@@ -77,8 +77,15 @@ describe('harvestEntriesFromLog edge cases', () => {
     );
     expect(entries).toHaveLength(1);
     expect(entries[0].file).toBe('/w/a.cpp');
-    expect(entries[0].arguments).not.toContain('tee');
-    expect(entries[0].arguments).not.toContain('build.log');
+    expect(entries[0].arguments).toEqual(['bisheng', '-x', 'cce', '-c', 'a.cpp']);
+  });
+
+  it('keeps arguments that follow a glob token', () => {
+    const entries = harvestEntriesFromLog('bisheng -c a.cpp -I inc/*.h -o k.o', '/w');
+    expect(entries).toHaveLength(1);
+    expect(entries[0].file).toBe('/w/a.cpp');
+    expect(entries[0].arguments).toContain('-o');
+    expect(entries[0].arguments).toContain('k.o');
   });
 
   it('keeps the compiler as the first argument', () => {
