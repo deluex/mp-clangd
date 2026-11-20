@@ -1,4 +1,4 @@
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import { normalizeEntry, unitsForFile, type Unit } from './entries.js';
 import { atomicWriteJson } from './fs-utils.js';
 import type { StateStore } from './state.js';
@@ -34,6 +34,27 @@ function selectUnit(profile: Profile, state: StateStore, file: string): Unit | u
   return units.find((unit) => unit.key === key) ?? units[0];
 }
 
+function isSourceToken(source: CompileEntry, argument: string): boolean {
+  if (argument.startsWith('-')) {
+    return false;
+  }
+  return resolve(source.directory, argument) === source.file;
+}
+
+function replaceSourceToken(source: CompileEntry, header: string): string[] {
+  const args = [...source.arguments];
+  let index = args.indexOf(source.file);
+  if (index === -1) {
+    index = args.findIndex((argument) => isSourceToken(source, argument));
+  }
+  if (index === -1) {
+    args.push(header);
+  } else {
+    args[index] = header;
+  }
+  return args;
+}
+
 function headerEntry(profile: Profile, request: HeaderRootRequest): CompileEntry | undefined {
   const root = unitsForFile(profile, request.rootFile).find(
     (unit) => unit.key === request.unitKey,
@@ -42,18 +63,11 @@ function headerEntry(profile: Profile, request: HeaderRootRequest): CompileEntry
     return undefined;
   }
   const source = root.entry;
-  let replaced = false;
-  const args = source.arguments.map((argument) => {
-    if (argument !== source.file) {
-      return argument;
-    }
-    replaced = true;
-    return request.header;
-  });
-  if (!replaced) {
-    args.push(request.header);
-  }
-  return { directory: source.directory, file: request.header, arguments: args };
+  return {
+    directory: source.directory,
+    file: request.header,
+    arguments: replaceSourceToken(source, request.header),
+  };
 }
 
 export function materialize(input: MaterializeInput): CompileEntry[] {

@@ -58,6 +58,24 @@ describe('materialize', () => {
     expect(header?.arguments).toContain('/w/h.h');
     expect(header?.arguments).not.toContain('/w/k.cpp');
   });
+
+  it('replaces a relative source token for a header entry', () => {
+    dir = mkdtempSync(join(tmpdir(), 'mp-clangd-mat-'));
+    const state = StateStore.load(dir);
+    const relative = {
+      directory: '/w',
+      file: '/w/src/k.cpp',
+      arguments: ['clang++', '-c', 'src/k.cpp', '-o', 'k.o'],
+    };
+    const out = materialize({
+      profile: { id: 'p', entries: [relative] },
+      state,
+      headerRoots: [{ header: '/w/h.h', rootFile: '/w/src/k.cpp', unitKey: entryKey(relative) }],
+    });
+    const header = out.find((e) => e.file === '/w/h.h');
+    expect(header?.arguments).toContain('/w/h.h');
+    expect(header?.arguments).not.toContain('src/k.cpp');
+  });
 });
 
 describe('writeCompileCommands', () => {
