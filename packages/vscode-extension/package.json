@@ -1,0 +1,46 @@
+{
+  "name": "mp-clangd-vscode",
+  "displayName": "mp_clangd",
+  "description": "Profile and compile unit selection for clangd.",
+  "version": "0.0.0",
+  "publisher": "mp-clangd",
+  "private": true,
+  "type": "commonjs",
+  "main": "./dist/extension.js",
+  "engines": {
+    "vscode": "^1.90.0"
+  },
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "contributes": {
+    "commands": [
+      {
+        "command": "mpClangd.selectProfile",
+        "title": "mp_clangd: Select Profile"
+      },
+      {
+        "command": "mpClangd.selectUnit",
+        "title": "mp_clangd: Select Compile Unit"
+      },
+      {
+        "command": "mpClangd.refresh",
+        "title": "mp_clangd: Refresh"
+      },
+      {
+        "command": "mpClangd.doctor",
+        "title": "mp_clangd: Doctor"
+      }
+    ]
+  },
+  "scripts": {
+    "build": "node esbuild.mjs"
+  },
+  "dependencies": {
+    "@mp-clangd/core": "0.0.0",
+    "@mp-clangd/provider-cdb": "0.0.0"
+  },
+  "devDependencies": {
+    "@types/vscode": "^1.90.0"
+  }
+}
