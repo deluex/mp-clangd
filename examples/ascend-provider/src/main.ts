@@ -1,7 +1,10 @@
 #!/usr/bin/env node
+import { readFileSync } from 'node:fs';
 import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { mergeProfileSets } from '@mp-clangd/core';
 import { buildProfileSetFromCdbs, discoverCompileCommands } from '@mp-clangd/provider-cdb';
+import { harvestEntriesFromLog } from './harvest.js';
 import { loadPreset } from './preset.js';
 import { buildAscendProfileSet, probeEntry } from './provider.js';
 
@@ -13,6 +16,7 @@ const USAGE = [
   '  --workspace <dir>  workspace root (default: current directory)',
   '  --preset <file>    preset file (default: preset.yaml next to the provider)',
   '  --cdb <file>       compile_commands.json to read (repeatable; default: auto-discover)',
+  '  --build-log <file> build log to harvest bisheng entries from',
   '  --help             show this help',
 ].join('\n');
 
@@ -20,6 +24,7 @@ interface Options {
   workspace: string;
   preset: string;
   cdbs: string[];
+  buildLog?: string;
 }
 
 type ParsedArgs = { help: true } | { help: false; options: Options };
@@ -28,6 +33,7 @@ function parseArgs(argv: string[]): ParsedArgs {
   let workspace = process.cwd();
   let preset = DEFAULT_PRESET;
   const cdbs: string[] = [];
+  let buildLog: string | undefined;
 
   for (let index = 0; index < argv.length; index += 1) {
     const flag = argv[index];
@@ -49,12 +55,23 @@ function parseArgs(argv: string[]): ParsedArgs {
       case '--cdb':
         cdbs.push(path.resolve(value));
         break;
+      case '--build-log':
+        buildLog = path.resolve(value);
+        break;
       default:
         throw new Error(`unknown option "${flag}"`);
     }
   }
 
-  return { help: false, options: { workspace, preset, cdbs } };
+  return { help: false, options: { workspace, preset, cdbs, buildLog } };
+}
+
+function readBuildLog(buildLogPath: string): string {
+  try {
+    return readFileSync(buildLogPath, 'utf8');
+  } catch (error) {
+    throw new Error(`${buildLogPath}: failed to read build log`, { cause: error });
+  }
 }
 
 async function run(argv: string[]): Promise<void> {
@@ -64,10 +81,14 @@ async function run(argv: string[]): Promise<void> {
     return;
   }
 
-  const { workspace, preset: presetPath, cdbs } = parsed.options;
+  const { workspace, preset: presetPath, cdbs, buildLog } = parsed.options;
   const preset = loadPreset(presetPath);
   const cdbPaths = cdbs.length > 0 ? cdbs : await discoverCompileCommands(workspace);
-  const base = await buildProfileSetFromCdbs(cdbPaths, workspace);
+  let base = await buildProfileSetFromCdbs(cdbPaths, workspace);
+  if (buildLog !== undefined) {
+    const entries = harvestEntriesFromLog(readBuildLog(buildLog), workspace);
+    base = mergeProfileSets([base, { profiles: [{ id: 'harvested', entries }] }]);
+  }
   const cacheDir = path.join(workspace, '.mpclangd', 'cache');
   const set = await buildAscendProfileSet(base, preset, probeEntry, cacheDir);
   process.stdout.write(`${JSON.stringify(set, null, 2)}\n`);
