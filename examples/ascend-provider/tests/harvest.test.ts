@@ -62,4 +62,32 @@ describe('harvestEntriesFromLog edge cases', () => {
     );
     expect(entries).toEqual([]);
   });
+
+  it('skips a malformed line without aborting the harvest', () => {
+    const lines = ['bisheng -c ${SRC', 'bisheng -c /w/k.cpp'];
+    const entries = harvestEntriesFromLog(lines.join('\n'), '/w');
+    expect(entries).toHaveLength(1);
+    expect(entries[0].file).toBe('/w/k.cpp');
+  });
+
+  it('drops pipeline and redirection suffixes from arguments', () => {
+    const entries = harvestEntriesFromLog(
+      'bisheng -x cce -c a.cpp 2>&1 | tee build.log',
+      '/w',
+    );
+    expect(entries).toHaveLength(1);
+    expect(entries[0].file).toBe('/w/a.cpp');
+    expect(entries[0].arguments).not.toContain('tee');
+    expect(entries[0].arguments).not.toContain('build.log');
+  });
+
+  it('keeps the compiler as the first argument', () => {
+    const entries = harvestEntriesFromLog('bisheng -x cce -c /w/k.cpp', '/w');
+    expect(entries[0].arguments[0]).toBe('bisheng');
+  });
+
+  it('skips lines whose source token is empty', () => {
+    const entries = harvestEntriesFromLog('bisheng -c ${SRC}', '/w');
+    expect(entries).toEqual([]);
+  });
 });

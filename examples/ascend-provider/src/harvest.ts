@@ -16,6 +16,25 @@ function tokenAfter(tokens: string[], flag: string): string | undefined {
   return index >= 0 ? tokens[index + 1] : undefined;
 }
 
+/**
+ * Splits a command into plain tokens and stops at the first shell operator,
+ * so pipelines and redirections (e.g. `2>&1 | tee build.log`) never leak
+ * into the harvested arguments.
+ */
+function tokenize(command: string): string[] {
+  const tokens: string[] = [];
+  for (const entry of parseShell(command)) {
+    if (typeof entry === 'string') {
+      tokens.push(entry);
+      continue;
+    }
+    if ('op' in entry) {
+      break;
+    }
+  }
+  return tokens;
+}
+
 function hasSourceSuffix(token: string): boolean {
   const lower = token.toLowerCase();
   return SOURCE_SUFFIXES.some((suffix) => lower.endsWith(suffix));
@@ -50,9 +69,43 @@ function lastSourceToken(tokens: string[]): string | undefined {
   return undefined;
 }
 
+function entryFromLine(line: string, fallback: string): CompileEntry | undefined {
+  let directory = fallback;
+  let command = line;
+  const cdMatch = CD_PREFIX.exec(line);
+  if (cdMatch !== null) {
+    directory = path.resolve(fallback, cdMatch[1]);
+    command = cdMatch[2];
+  }
+
+  const tokens = tokenize(command);
+  const compiler = tokens[0];
+  if (compiler === undefined || !COMPILER_NAMES.has(basename(compiler))) {
+    return undefined;
+  }
+
+  const args = tokens.slice(1);
+  if (!args.includes('-c') && !args.includes('-x')) {
+    return undefined;
+  }
+
+  const output = tokenAfter(args, '-o');
+  const source = sourceAfterCompileFlag(args, output) ?? lastSourceToken(args);
+  if (source === undefined || source.length === 0) {
+    return undefined;
+  }
+
+  return {
+    directory,
+    file: path.resolve(directory, source),
+    arguments: tokens,
+  };
+}
+
 /**
  * Extracts compile entries for bisheng/ccec invocations from a build log.
  * Recognized lines either start with the compiler or `cd <dir> && <compiler>`.
+ * Malformed lines are skipped so one bad line cannot abort the harvest.
  */
 export function harvestEntriesFromLog(log: string, defaultDirectory: string): CompileEntry[] {
   const fallback = path.resolve(defaultDirectory);
@@ -65,44 +118,21 @@ export function harvestEntriesFromLog(log: string, defaultDirectory: string): Co
       continue;
     }
 
-    let directory = fallback;
-    let command = line;
-    const cdMatch = CD_PREFIX.exec(line);
-    if (cdMatch !== null) {
-      directory = path.resolve(fallback, cdMatch[1]);
-      command = cdMatch[2];
-    }
-
-    const tokens = parseShell(command).filter(
-      (token): token is string => typeof token === 'string',
-    );
-    const compiler = tokens[0];
-    if (compiler === undefined || !COMPILER_NAMES.has(basename(compiler))) {
+    try {
+      const entry = entryFromLine(line, fallback);
+      if (entry === undefined) {
+        continue;
+      }
+      const key = entryKey(entry);
+      if (seen.has(key)) {
+        continue;
+      }
+      seen.add(key);
+      entries.push(entry);
+    } catch {
+      // Build logs are arbitrary text; keep harvesting the remaining lines.
       continue;
     }
-
-    const args = tokens.slice(1);
-    if (!args.includes('-c') && !args.includes('-x')) {
-      continue;
-    }
-
-    const output = tokenAfter(args, '-o');
-    const source = sourceAfterCompileFlag(args, output) ?? lastSourceToken(args);
-    if (source === undefined) {
-      continue;
-    }
-
-    const entry: CompileEntry = {
-      directory,
-      file: path.resolve(directory, source),
-      arguments: tokens,
-    };
-    const key = entryKey(entry);
-    if (seen.has(key)) {
-      continue;
-    }
-    seen.add(key);
-    entries.push(entry);
   }
 
   return entries;
