@@ -1,0 +1,5 @@
+[{
+  "directory": ".",
+  "file": "kernel.cpp",
+  "arguments": ["bisheng", "-xasc", "--npu-arch=dav-2201", "-c", "kernel.cpp", "-o", "kernel.o"]
+}]
