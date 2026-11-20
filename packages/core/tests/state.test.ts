@@ -36,6 +36,23 @@ describe('StateStore', () => {
     expect(store.getHeaderHistory('p2', '/w/h.h')).toEqual([{ rootFile: '/w/b.cpp', unitKey: 'u2' }]);
   });
 
+  it('lists header roots for a single profile', () => {
+    dir = mkdtempSync(join(tmpdir(), 'mp-clangd-state-'));
+    const store = StateStore.load(dir);
+    store.setHeaderRoot('p1', '/w/a.h', { rootFile: '/w/a.cpp', unitKey: 'u1' });
+    store.setHeaderRoot('p1', '/w/b.h', { rootFile: '/w/b.cpp', unitKey: 'u2' });
+    store.setHeaderRoot('p2', '/w/c.h', { rootFile: '/w/c.cpp', unitKey: 'u3' });
+
+    expect(store.listHeaderRoots('p1')).toEqual([
+      { header: '/w/a.h', root: { rootFile: '/w/a.cpp', unitKey: 'u1' } },
+      { header: '/w/b.h', root: { rootFile: '/w/b.cpp', unitKey: 'u2' } },
+    ]);
+    expect(store.listHeaderRoots('p2')).toEqual([
+      { header: '/w/c.h', root: { rootFile: '/w/c.cpp', unitKey: 'u3' } },
+    ]);
+    expect(store.listHeaderRoots('missing')).toEqual([]);
+  });
+
   it('treats missing or corrupt state as empty', () => {
     dir = mkdtempSync(join(tmpdir(), 'mp-clangd-state-'));
     const store = StateStore.load(dir);

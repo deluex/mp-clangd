@@ -55,37 +55,12 @@ function requireActiveProfile(set: ProfileSet, state: StateStore): Profile {
   return profile;
 }
 
-interface PersistedState {
-  headerRoots?: unknown;
-}
-
-// StateStore has no enumeration API, so read the persisted header roots map to
-// find the headers recorded for a profile and validate them through the store.
 function headerRootsForProfile(state: StateStore, profileId: string): HeaderRootRequest[] {
-  let parsed: PersistedState;
-  try {
-    parsed = JSON.parse(readFileSync(state.path, 'utf8')) as PersistedState;
-  } catch {
-    return [];
-  }
-  const recorded = parsed.headerRoots;
-  if (typeof recorded !== 'object' || recorded === null || Array.isArray(recorded)) {
-    return [];
-  }
-
-  const requests: HeaderRootRequest[] = [];
-  for (const key of Object.keys(recorded)) {
-    const separator = key.indexOf('\u0000');
-    if (separator === -1 || key.slice(0, separator) !== profileId) {
-      continue;
-    }
-    const header = key.slice(separator + 1);
-    const root = state.getHeaderRoot(profileId, header);
-    if (root !== undefined) {
-      requests.push({ header, rootFile: root.rootFile, unitKey: root.unitKey });
-    }
-  }
-  return requests;
+  return state.listHeaderRoots(profileId).map(({ header, root }) => ({
+    header,
+    rootFile: root.rootFile,
+    unitKey: root.unitKey,
+  }));
 }
 
 function materializeProfile(io: CliIO, state: StateStore, profile: Profile): void {

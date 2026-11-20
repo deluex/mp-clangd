@@ -7,6 +7,11 @@ export interface HeaderRoot {
   unitKey: string;
 }
 
+export interface HeaderRootEntry {
+  header: string;
+  root: HeaderRoot;
+}
+
 interface StateFile {
   activeProfile?: string;
   fileUnits: Record<string, string>;
@@ -158,6 +163,20 @@ export class StateStore {
 
   setHeaderRoot(profileId: string, header: string, root: HeaderRoot): void {
     this.state.headerRoots[compositeKey(profileId, header)] = cloneRoot(root);
+  }
+
+  listHeaderRoots(profileId: string): HeaderRootEntry[] {
+    const prefix = `${profileId}\u0000`;
+    const entries: HeaderRootEntry[] = [];
+    for (const [key, root] of Object.entries(this.state.headerRoots)) {
+      if (!key.startsWith(prefix)) {
+        continue;
+      }
+      entries.push({ header: key.slice(prefix.length), root: cloneRoot(root) });
+    }
+    return entries.sort((left, right) =>
+      left.header < right.header ? -1 : left.header > right.header ? 1 : 0,
+    );
   }
 
   getHeaderHistory(profileId: string, header: string): HeaderRoot[] {
