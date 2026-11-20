@@ -3,6 +3,9 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
+  "scripts": {
+    "build": "tsup src/main.ts --format esm --out-dir dist --clean"
+  },
   "dependencies": {
     "@mp-clangd/core": "0.0.0",
     "@mp-clangd/provider-cdb": "0.0.0",
