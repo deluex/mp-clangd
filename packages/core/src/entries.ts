@@ -50,15 +50,22 @@ export function deriveUnitLabel(entries: CompileEntry[], entry: CompileEntry): s
 
   const output = outputBasename(entry);
   if (output !== undefined) {
-    const otherOutputs = others
-      .map(outputBasename)
-      .filter((value): value is string => value !== undefined);
-    if (!otherOutputs.includes(output)) {
-      return output;
-    }
+    return output;
   }
 
   return `unit ${entries.indexOf(entry) + 1}`;
+}
+
+function disambiguateLabels(units: Unit[]): Unit[] {
+  const occurrences = new Map<string, number>();
+  return units.map((unit) => {
+    const count = occurrences.get(unit.label) ?? 0;
+    occurrences.set(unit.label, count + 1);
+    if (count === 0) {
+      return unit;
+    }
+    return { ...unit, label: `${unit.label} #${count + 1}` };
+  });
 }
 
 export function unitsForFile(profile: Profile, file: string): Unit[] {
@@ -78,11 +85,12 @@ export function unitsForFile(profile: Profile, file: string): Unit[] {
     unique.push(entry);
   }
 
-  return unique
+  const units = unique
     .map((entry) => ({
       key: entryKey(entry),
       entry,
       label: deriveUnitLabel(unique, entry),
     }))
     .sort((a, b) => (a.label < b.label ? -1 : a.label > b.label ? 1 : 0));
+  return disambiguateLabels(units);
 }

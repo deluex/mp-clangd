@@ -31,6 +31,16 @@ describe('unitsForFile', () => {
       .toEqual(['a.o', 'b.o']);
   });
 
+  it('disambiguates duplicate labels', () => {
+    const entries = [
+      mk(['clang++', '-O1', '-c', 'k.cpp', '-o', 'out/k.o']),
+      mk(['clang++', '-O2', '-c', 'k.cpp', '-o', 'out/k.o']),
+      mk(['clang++', '-O3', '-c', 'k.cpp', '-o', 'out/k.o']),
+    ];
+    expect(unitsForFile({ id: 'p', entries }, '/w/k.cpp').map((u) => u.label))
+      .toEqual(['k.o', 'k.o #2', 'k.o #3']);
+  });
+
   it('returns only units for the requested file', () => {
     const entries = [
       mk(['clang++', '-o', 'k.o']),
@@ -55,15 +65,6 @@ describe('deriveUnitLabel', () => {
     ];
     expect(deriveUnitLabel(entries, entries[0])).toBe('ALPHA');
     expect(deriveUnitLabel(entries, entries[1])).toBe('BETA');
-  });
-
-  it('ignores a -o basename shared with another entry', () => {
-    const entries = [
-      entryFor('/w/k.cpp', ['cc', '-O2', '-o', 'out/k.o']),
-      entryFor('/w/k.cpp', ['cc', '-O3', '-o', 'build/k.o']),
-    ];
-    expect(deriveUnitLabel(entries, entries[0])).toBe('unit 1');
-    expect(deriveUnitLabel(entries, entries[1])).toBe('unit 2');
   });
 
   it('falls back to a positional label', () => {
