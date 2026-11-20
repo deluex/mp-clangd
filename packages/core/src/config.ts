@@ -2,11 +2,20 @@ import { existsSync, readFileSync } from 'node:fs';
 import * as path from 'node:path';
 import { parse } from 'yaml';
 
-export interface ProviderConfig {
-  use: string;
-  command?: string[];
+export interface BuiltinCdbProviderConfig {
+  use: 'builtin:cdb';
+  include?: string[];
+  exclude?: string[];
+}
+
+export interface CommandProviderConfig {
+  use: 'command';
+  command: string[];
+  config?: string;
   output?: string;
 }
+
+export type ProviderConfig = BuiltinCdbProviderConfig | CommandProviderConfig;
 
 export interface MpClangdConfig {
   providers: ProviderConfig[];
@@ -32,26 +41,43 @@ function parseStringArray(value: unknown, context: string): string[] {
   return result;
 }
 
+function parseOptionalString(value: unknown, context: string): string {
+  if (typeof value !== 'string' || value.length === 0) {
+    throw new Error(`${context} must be a non-empty string`);
+  }
+  return value;
+}
+
 function parseProvider(value: unknown, index: number): ProviderConfig {
   const context = `${CONFIG_FILE_NAME}: providers[${index}]`;
   if (!isRecord(value)) {
     throw new Error(`${context} must be an object`);
   }
-  const { use, command, output } = value;
-  if (typeof use !== 'string' || use.length === 0) {
-    throw new Error(`${context}.use must be a non-empty string`);
-  }
-  const provider: ProviderConfig = { use };
-  if (command !== undefined) {
-    provider.command = parseStringArray(command, `${context}.command`);
-  }
-  if (output !== undefined) {
-    if (typeof output !== 'string' || output.length === 0) {
-      throw new Error(`${context}.output must be a non-empty string`);
+  const { use } = value;
+  if (use === 'builtin:cdb') {
+    const provider: BuiltinCdbProviderConfig = { use };
+    if (value.include !== undefined) {
+      provider.include = parseStringArray(value.include, `${context}.include`);
     }
-    provider.output = output;
+    if (value.exclude !== undefined) {
+      provider.exclude = parseStringArray(value.exclude, `${context}.exclude`);
+    }
+    return provider;
   }
-  return provider;
+  if (use === 'command') {
+    const provider: CommandProviderConfig = {
+      use,
+      command: parseStringArray(value.command, `${context}.command`),
+    };
+    if (value.config !== undefined) {
+      provider.config = parseOptionalString(value.config, `${context}.config`);
+    }
+    if (value.output !== undefined) {
+      provider.output = parseOptionalString(value.output, `${context}.output`);
+    }
+    return provider;
+  }
+  throw new Error(`${context}.use must be "builtin:cdb" or "command"`);
 }
 
 export function loadConfig(workspaceDir: string): MpClangdConfig {

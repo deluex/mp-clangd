@@ -41,15 +41,28 @@ function readOutputFile(workspaceDir: string, output: string): string {
 }
 
 const commandProvider: ProviderFactory = (context) => {
-  const { workspaceDir, config } = context;
-  if (!config.command || config.command.length === 0) {
+  const { workspaceDir, config: providerConfig } = context;
+  if (providerConfig.use !== 'command') {
+    throw new ProviderError(
+      `command provider cannot handle config for "${providerConfig.use}"`,
+    );
+  }
+  if (!providerConfig.command || providerConfig.command.length === 0) {
     throw new ProviderError('command provider requires a non-empty "command" array');
   }
 
-  const [executable, ...args] = config.command.map((token) =>
-    substituteWorkspace(token, workspaceDir),
-  );
-  const result = spawnSync(executable, args, { cwd: workspaceDir, encoding: 'utf8' });
+  const configPath = providerConfig.config !== undefined
+    ? path.resolve(workspaceDir, substituteWorkspace(providerConfig.config, workspaceDir))
+    : undefined;
+  const command = providerConfig.command.map((token) => {
+    const value = substituteWorkspace(token, workspaceDir);
+    return configPath !== undefined ? value.split('{config}').join(configPath) : value;
+  });
+  const [executable, ...args] = command;
+  const env = configPath !== undefined
+    ? { ...process.env, MP_CLANGD_PROVIDER_CONFIG: configPath }
+    : process.env;
+  const result = spawnSync(executable, args, { cwd: workspaceDir, encoding: 'utf8', env });
   const stderr = result.stderr ?? '';
 
   if (result.error) {
@@ -64,7 +77,9 @@ const commandProvider: ProviderFactory = (context) => {
     throw new ProviderError(withStderr(`provider command "${executable}" ${detail}`, stderr));
   }
 
-  const output = config.output ? readOutputFile(workspaceDir, config.output) : result.stdout ?? '';
+  const output = providerConfig.output
+    ? readOutputFile(workspaceDir, providerConfig.output)
+    : result.stdout ?? '';
   if (output.trim().length === 0) {
     throw new ProviderError(withStderr('provider command produced empty output', stderr));
   }
