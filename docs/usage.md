@@ -183,7 +183,7 @@ ProfileSet 是 provider 与核心之间的唯一契约。
 
 ### 4.1 直接提供文件
 
-VSCode 扩展在激活时优先读取 `.mpclangd/profiles.json`；如果文件存在且合法，就直接使用，不运行 provider。适合由外部构建系统生成 ProfileSet 的场景。
+VSCode 扩展在激活时优先读取 `.mpclangd/profiles.json`；如果文件存在且合法，就直接使用。激活阶段不运行 provider；文件不存在时也不会在激活阶段运行 provider。`Refresh`、`Select Profile`、`Select Compile Unit` 会运行 provider。适合由外部构建系统生成 ProfileSet 的场景。
 
 ```text
 <workspace>/.mpclangd/profiles.json
@@ -191,7 +191,7 @@ VSCode 扩展在激活时优先读取 `.mpclangd/profiles.json`；如果文件�
 
 注意：
 
-- CLI 的 `profiles`、带名字的 `profile` 与 `refresh` 始终运行 provider，不会读取这个文件；不带名字的 `profile` 只读取 `state.json`。
+- CLI 的 `profiles`、带名字的 `profile`、`unit`、`headers` 与 `refresh` 始终运行 provider，不会读取这个文件；不带名字的 `profile` 只读取 `state.json`。
 - 扩展的 `Refresh` 与 `Select Profile` 会重新运行 provider 并覆盖该文件。
 - `.mpclangd/` 默认被 `mp-clangd init` 加入 `.gitignore`。
 
@@ -325,7 +325,7 @@ sanitize:
 注意：
 
 - probe 只要求 cc1 行中出现 preset 声明的 pass；编译器后续报错不会阻止 pass 解析。完整编译是否成功由构建系统决定。
-- probe 产生的 `.o` 与日志会留在 `.mpclangd/cache/probe/`，当前不会自动清理。
+- probe 产生的临时 `.o` 文件会留在 `.mpclangd/cache/probe/`，当前不会自动清理；编译器 stderr 只在内存中解析，不会写入日志文件。
 - 如果 probe 找不到某个 pass，命令会失败并报告该 pass 与 `arch_suffix`。
 - preset 宏只是按声明注入 `-D<macro>=1`；当前实现不会运行 `-dM` 逐项校验宏集合。
 
@@ -365,7 +365,7 @@ sanitize:
 
 ### 6.2 物化规则
 
-- 每个文件只保留一条 entry：当前选中的 unit，否则第一条。
+- 每个文件只保留一条 entry：当前选中的 unit，否则按 label 排序后的第一条 unit。
 - 结果为 `.mpclangd/compile_commands.json`，使用临时文件 + rename 原子写入。
 - 切换 profile 时重建整份物化 CDB；切换 unit 时只改变受影响文件（实现上仍会重写整份文件，但其他文件的选择保持不变）。
 - CLI 的 `unit` 命令不直接调用物化；执行 `mp-clangd refresh` 后会按保存的 unit 重新物化。VSCode 扩展的 unit 切换会立即物化。
@@ -383,6 +383,15 @@ sanitize:
 ```
 
 扩展激活时会检查 `.vscode/settings.json`；缺少该参数时提示写入。CLI 的 `doctor` 也会检查该文件。
+
+`mp-clangd doctor` 与 VSCode 的 `mp_clangd: Doctor` 还会逐个运行 `mp_clangd.yaml` 中配置的 provider，并输出：
+
+```text
+provider builtin:cdb: ok
+provider command: failed - provider command "node" exited with code 3
+```
+
+单个 provider 失败不会中止后续 provider 或文件检查；`doctor` 始终返回 0，便于一次查看全部状态。
 
 ## 7. 常见问题
 

@@ -117,7 +117,7 @@ npx mp-clangd profiles
 | `mp-clangd unit <file> [name]` | 不带 `name` 时列出该文件的 unit；带 `name` 时按 label 或 key 选择并保存。 |
 | `mp-clangd headers <header>` | 打印能到达该头文件的 include 链（`root -> ... -> header`）。 |
 | `mp-clangd refresh` | 重新运行 provider，写入 `.mpclangd/profiles.json` 并物化当前 profile。 |
-| `mp-clangd doctor` | 检查 `.mpclangd/profiles.json`、`.mpclangd/compile_commands.json` 和 `.vscode/settings.json` 中的 clangd 参数。 |
+| `mp-clangd doctor` | 检查 `.mpclangd/profiles.json`、`.mpclangd/compile_commands.json`、`.vscode/settings.json` 中的 clangd 参数，并逐个报告 provider 状态。 |
 
 示例：
 
@@ -142,6 +142,7 @@ npx mp-clangd doctor
 # ok .mpclangd/profiles.json
 # ok .mpclangd/compile_commands.json
 # missing .vscode/settings.json contains --compile-commands-dir=.mpclangd
+# provider builtin:cdb: ok
 ```
 
 unit 的 label 规则：
@@ -151,7 +152,7 @@ unit 的 label 规则：
 3. 否则使用 `unit <序号>`；
 4. 同 label 冲突时追加 ` #2`、` #3`。
 
-物化 CDB 中每个文件只保留一条 entry；其他文件仍使用各自保存的选择，未选择时使用该文件的第一条 entry。VSCode 扩展在切换 profile/unit 后立即重新物化；CLI 的 `profile` 会立即重新物化，CLI 的 `unit` 只保存选择，需要再执行 `refresh`（或选择一个 profile）后生效。
+物化 CDB 中每个文件只保留一条 entry；其他文件仍使用各自保存的选择，未选择时使用按 label 排序后的第一条 unit。VSCode 扩展在切换 profile/unit 后立即重新物化；CLI 的 `profile` 会立即重新物化，CLI 的 `unit` 只保存选择，需要再执行 `refresh`（或选择一个 profile）后生效。
 
 ## VSCode 扩展
 
@@ -185,7 +186,7 @@ unit 的 label 规则：
   2. 该头文件的历史选择；
   3. 按路径字母序第一条。
 - 切换 profile/unit/头文件根后重新物化 CDB，并调用 `clangd.restart` 重新加载。
-- 扩展优先读取 `.mpclangd/profiles.json`；文件不存在时运行 provider。`Refresh` 或 `Select Profile` 会重新生成该文件。
+- 扩展优先读取 `.mpclangd/profiles.json`；文件存在且合法时直接使用，激活阶段不运行 provider，文件不存在时激活阶段也不运行 provider。`Refresh`、`Select Profile`、`Select Compile Unit` 会运行 provider；`Refresh` 与 `Select Profile` 会重新生成 `.mpclangd/profiles.json`。
 
 ## ProfileSet 与 provider 契约
 
@@ -262,7 +263,7 @@ providers:
 - **静态 include 图**。include 链由源码静态扫描近似得到，不使用编译器依赖输出；条件编译可能造成过度近似。
 - **头文件 entry 按需物化**。只对已打开或显式选择过根 TU 的头文件写入 entry。
 - **provider 同步执行**。大工程首次 probe/refresh 可能较慢；Ascend provider 会把 probe 临时文件放在 `.mpclangd/cache/probe/`。
-- **`doctor` 是轻量检查**。它报告生成文件与 clangd 参数是否存在，不探测编译器或完整 provider 健康状态；provider 错误会在 `refresh`/`profiles` 时直接返回。
+- **`doctor` 报告生成文件、clangd 参数与 provider 状态**。它逐个运行配置中的 provider 并报告成功或失败；单个 provider 失败不会中止其他检查。它不探测编译器版本或 probe 是否可用。
 
 ## 开发与测试
 

@@ -39,6 +39,36 @@ export function loadProfileSet(workspaceDir: string): Promise<ProfileSet> {
   return runProviders(workspaceDir, loadConfig(workspaceDir));
 }
 
+export interface ProviderStatus {
+  use: string;
+  ok: boolean;
+  error?: string;
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+export async function providerStatuses(workspaceDir: string): Promise<ProviderStatus[]> {
+  let config: ReturnType<typeof loadConfig>;
+  try {
+    config = loadConfig(workspaceDir);
+  } catch (error) {
+    return [{ use: 'configuration', ok: false, error: errorMessage(error) }];
+  }
+
+  const statuses: ProviderStatus[] = [];
+  for (const provider of config.providers) {
+    try {
+      await runProviders(workspaceDir, { providers: [provider] });
+      statuses.push({ use: provider.use, ok: true });
+    } catch (error) {
+      statuses.push({ use: provider.use, ok: false, error: errorMessage(error) });
+    }
+  }
+  return statuses;
+}
+
 export function profilesFilePath(workspaceDir: string): string {
   return path.join(workspaceDir, MPCLANGD_DIRECTORY, PROFILES_FILE);
 }

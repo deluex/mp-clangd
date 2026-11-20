@@ -30,14 +30,14 @@ node examples/ascend-provider/dist/main.js \
   --preset examples/ascend-provider/preset.yaml
 ```
 
-不传 `--preset` 时，默认使用 `dist/main.js` 上一级目录中的 `preset.yaml`（仓库内即 `examples/ascend-provider/preset.yaml`）。如果把 `dist/` 的内容平铺到其他目录，请显式传 `--preset`。
+不传 `--preset` 时，默认使用与 `dist/` 同级的 `preset.yaml`（仓库内即 `examples/ascend-provider/preset.yaml`）。如果把 `dist/` 的内容平铺到其他目录，请显式传 `--preset`。
 
 ### 2.1 选项
 
 | 选项 | 说明 |
 |---|---|
 | `--workspace <dir>` | workspace 根目录；默认是当前目录。相对路径按当前目录解析。 |
-| `--preset <file>` | preset 文件；默认是 `dist/main.js` 上一级目录中的 `preset.yaml`。 |
+| `--preset <file>` | preset 文件；默认是与 `dist/` 同级的 `preset.yaml`。 |
 | `--cdb <file>` | 指定 `compile_commands.json`，可重复；指定后不再自动发现 CDB。 |
 | `--build-log <file>` | 从构建日志采集 `bisheng`/`ccec` entry。 |
 | `--help`, `-h` | 显示帮助。 |
@@ -248,12 +248,28 @@ cmake -S /tmp/ops-transformer/examples/fast_kernel_launch_example \
 podman exec cann_tmp mkdir -p /tmp/ws/build
 podman exec cann_tmp cp /tmp/ops-transformer/build/compile_commands.json \
   /tmp/ws/build/compile_commands.json
-podman exec -w /tmp/ws cann_tmp /tmp/node /tmp/ascend-provider/main.js \
-  --workspace /tmp/ws \
-  --preset /tmp/ascend-provider/preset.yaml
+podman exec -w /tmp/ws cann_tmp bash -lc \
+  '/tmp/node /tmp/ascend-provider/main.js --workspace /tmp/ws --preset /tmp/ascend-provider/preset.yaml > /tmp/ws/profiles.json'
 ```
 
-实际结果：
+原始 stdout 已保存到 `/tmp/ws/profiles.json`。按 profile 汇总（以下是对该文件的摘要，不是原始 JSON）：
+
+```bash
+podman exec cann_tmp python3 - <<'PY'
+import json
+d = json.load(open('/tmp/ws/profiles.json'))
+print('profiles:', [p['id'] for p in d['profiles']])
+for p in d['profiles']:
+    print(p['id'], 'entries:', len(p['entries']))
+    for e in p['entries']:
+        args = e['arguments']
+        print('  ', e['file'].split('/')[-1],
+              'cube=', '-D__DAV_CUBE__=1' in args,
+              'vec=', '-D__DAV_VEC__=1' in args)
+PY
+```
+
+摘要输出：
 
 ```text
 profiles: ['build/AIC', 'build/AIV']
@@ -387,7 +403,51 @@ podman exec -w /tmp/add_example cann_tmp /tmp/node /tmp/ascend-provider/main.js 
 
 结论：`--build-log` 成功采集 `add_example.cpp` 的 kernel entry，并展开为 `harvested/AIC` 与 `harvested/AIV` 两个 profile。probe 只解析编译器输出的 cc1 pass 行；尽管完整对象编译仍因缺少生成 tiling 头文件而失败，pass 解析与 ProfileSet 展开均成功。
 
-## 7. 已知限制
+### 6.3 清理
+
+```bash
+podman exec cann_tmp rm -rf /tmp/ws
+podman exec cann_tmp rm -rf /tmp/add_example
+podman exec cann_tmp rm -rf /tmp/ops-transformer
+```
+
+## 7. 未验证项（UNVERIFIED）
+
+以下三项在本次环境中无法执行，状态为 **UNVERIFIED**。不要把它们当作已通过的验收项。
+
+### 7.1 UNVERIFIED：stock clangd 解析物化 CDB
+
+- **已尝试**：验证了 `.mpclangd/compile_commands.json` 的生成与内容（每个文件一条 entry，AIC/AIV 宏正确），但没有启动 clangd。
+- **无法执行的原因**：宿主机与 `cann_tmp` 容器均没有 clangd 二进制；按约束不安装 OS 包。
+- **操作员手工步骤**：
+  1. 在安装 clangd（建议 ≥18）与官方 VSCode clangd 扩展的环境打开 workspace。
+  2. 确保 `.vscode/settings.json` 含 `"clangd.arguments": ["--compile-commands-dir=.mpclangd"]`。
+  3. 在 workspace 运行 `mp-clangd refresh`（或已存在合法的 `.mpclangd/compile_commands.json`）。
+  4. 执行 `clangd --compile-commands-dir=.mpclangd --check=<workspace>/kernel.cpp`，确认输出了编译命令且没有 “Failed to find compilation database” 类错误。
+  5. 在 VSCode 中打开 `kernel.cpp`，确认 include 与符号跳转可用、诊断中没有配置加载错误。
+
+### 7.2 UNVERIFIED：状态栏 profile/unit 切换
+
+- **已尝试**：扩展 bundle 构建成功；未启动 VSCode 扩展宿主或 UI。
+- **无法执行的原因**：当前环境没有 VSCode UI/扩展宿主，无法点击状态栏或观察 clangd 重载。
+- **操作员手工步骤**：
+  1. 构建扩展：`npm run build --workspace mp-clangd-vscode`。
+  2. 启动扩展宿主：`code --extensionDevelopmentPath=<repo>/packages/vscode-extension <workspace>`，并安装官方 clangd 扩展。
+  3. 点击左侧状态栏 profile，选择 `default/AIV` 或 `build/AIV`，确认 `.mpclangd/compile_commands.json` 中对应 entry 含 `-D__DAV_VEC__=1`。
+  4. 打开有多个 unit 的文件，点击右侧状态栏 unit，选择另一项，确认物化 CDB 与 clangd 诊断随之更新。
+  5. 确认 clangd 被重启或重新加载（扩展调用 `clangd.restart`）。
+
+### 7.3 UNVERIFIED：头文件树默认选择与记忆
+
+- **已尝试**：验证了 include 图与 header model 的单元测试；未在 VSCode 树视图中操作。
+- **无法执行的原因**：当前环境没有 VSCode UI/扩展宿主，无法打开头文件、查看 Include Paths 视图或跨会话验证记忆。
+- **操作员手工步骤**：
+  1. 在扩展宿主中打开包含多个根 TU 的头文件，确认 `mp_clangd Include Paths` 视图列出所有根 TU 与 include 链。
+  2. 确认默认根符合优先级：导航来源文件 → 历史选择 → 路径字母序第一条。
+  3. 通过 `mp_clangd: Select Header Root` 或点击树节点切换根，确认 `.mpclangd/compile_commands.json` 中该头文件的 entry 变为新根 TU 的命令。
+  4. 重新打开 workspace 或重新激活扩展，确认该头文件仍选择上次根（`.mpclangd/state.json` 中的 `headerRoots`/`headerHistory`）。
+
+## 8. 已知限制
 
 - probe 依赖真实编译器；首次运行每个匹配 entry 都会执行一次 `-v -c`。
 - probe 缓存目录当前不会自动清理。

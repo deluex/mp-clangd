@@ -19,6 +19,7 @@ import {
   loadProfileSet,
   materializeProfile,
   profilesFilePath,
+  providerStatuses,
   readProfilesFile,
   registerBuiltin,
   resolveActiveProfile,
@@ -205,7 +206,7 @@ function checkLabel(present: boolean): string {
   return present ? 'ok' : 'missing';
 }
 
-function doctor(): void {
+async function doctor(): Promise<void> {
   const workspaceDir = requireWorkspaceDir();
   if (workspaceDir === undefined || outputChannel === undefined) {
     return;
@@ -235,6 +236,12 @@ function doctor(): void {
   outputChannel.appendLine(
     `${checkLabel(hasClangdArgument(workspaceDir))} clangd.arguments contains ${CLANGD_ARGUMENT}`,
   );
+  for (const status of await providerStatuses(workspaceDir)) {
+    const detail = status.ok
+      ? 'ok'
+      : `failed - ${(status.error ?? 'unknown error').replace(/\s+/g, ' ').trim()}`;
+    outputChannel.appendLine(`provider ${status.use}: ${detail}`);
+  }
   outputChannel.show(true);
 }
 

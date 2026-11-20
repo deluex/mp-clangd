@@ -60,4 +60,26 @@ describe('cli', () => {
     expect(await runCli(['doctor'], stream)).toBe(0);
     expect(out.join('\n')).toContain('missing');
   });
+
+  it('doctor reports provider status and continues after a failure', async () => {
+    makeWorkspace();
+    const failScript = join(dir!, 'fail-provider.mjs');
+    writeFileSync(failScript, 'process.stderr.write("boom"); process.exit(3);');
+    writeFileSync(join(dir!, 'mp_clangd.yaml'), [
+      'providers:',
+      '  - use: builtin:cdb',
+      '  - use: command',
+      '    command:',
+      `      - ${JSON.stringify(process.execPath)}`,
+      `      - ${JSON.stringify(failScript)}`,
+    ].join('\n'));
+
+    const { io: stream, out } = io();
+    expect(await runCli(['doctor'], stream)).toBe(0);
+    const text = out.join('\n');
+    expect(text).toContain('provider builtin:cdb: ok');
+    expect(text).toContain('provider command: failed -');
+    expect(text).toContain('boom');
+    expect(text).toContain('missing');
+  });
 });

@@ -233,7 +233,11 @@ function hasClangdArgument(io: CliIO): boolean {
   }
 }
 
-function runDoctor(io: CliIO): number {
+function oneLine(message: string): string {
+  return message.replace(/\s+/g, ' ').trim();
+}
+
+async function runDoctor(io: CliIO): Promise<number> {
   const checks: Array<[string, boolean]> = [
     [
       `${STATE_DIRECTORY}/${PROFILES_FILE}`,
@@ -250,6 +254,25 @@ function runDoctor(io: CliIO): number {
   ];
   for (const [label, present] of checks) {
     io.stdout(`${present ? 'ok' : 'missing'} ${label}`);
+  }
+
+  let config: ReturnType<typeof loadConfig>;
+  try {
+    config = loadConfig(io.cwd);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    io.stdout(`provider configuration: failed - ${oneLine(message)}`);
+    return 0;
+  }
+
+  for (const provider of config.providers) {
+    try {
+      await runProviders(io.cwd, { providers: [provider] });
+      io.stdout(`provider ${provider.use}: ok`);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      io.stdout(`provider ${provider.use}: failed - ${oneLine(message)}`);
+    }
   }
   return 0;
 }
@@ -307,7 +330,7 @@ export async function runCli(argv: string[], io: CliIO): Promise<number> {
       case 'headers':
         return await runHeaders(io, args);
       case 'doctor':
-        return runDoctor(io);
+        return await runDoctor(io);
       case 'providers':
         return runProvidersList(io);
       default: {
